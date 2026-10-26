@@ -370,3 +370,13 @@ test('a missing associated folder remains deletable and cannot silently reorder 
     await assert.rejects(store.dispatch({ action: 'reorder', before: ['a', 'b'], after: ['b', 'a'] }), /missing/);
     assert.deepEqual(mutations, []);
 });
+
+test('direct space selection incorporates a native folder reorder immediately before choosing its position', async () => {
+    const folders = folderOrderFixture();
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'get' });
+    folders.reverse();
+    await store.dispatch({ action: 'switch', windowId: 1, index: 0 });
+    assert.equal(session.activeSpaces[1], 'b');
+    assert.equal(tabs.find(tab => tab.active).id, 2);
+});
