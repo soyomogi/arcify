@@ -257,7 +257,7 @@ test('reordering native pinned favicons updates Chrome and survives reload', asy
     await page.waitForSelector(`#pinnedFavicons [data-tab-id="${another}"]`);
     await page.$eval(`#pinnedFavicons [data-tab-id="${fixture.a}"]`, el => {
         el.classList.add('dragging');
-        el.parentElement.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: 100000 }));
+        el.parentElement.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: 100000, clientY: 100000 }));
         el.classList.remove('dragging');
     });
     await page.waitForFunction(async id => {

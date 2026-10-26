@@ -16,6 +16,7 @@ import { initSidebarTour } from './sidebar-tour.js';
 
 import { ChromeHelper } from './chromeHelper.js';
 import { spaceRequest } from './space-client.js';
+import { favoriteRequest } from './favorite-client.js';
 import { SpacePatchQueue } from './space-patch-queue.js';
 import { RefreshCoordinator } from './refresh-coordinator.js';
 import { EditSessionRegistry } from './edit-sessions.js';
@@ -246,215 +247,99 @@ function reapplySpaceColors() {
 }
 
 // Function to update pinned favicons
+let favoriteRenderGeneration = 0;
 async function updatePinnedFavicons() {
-    const pinnedFavicons = document.getElementById('pinnedFavicons');
-    const pinnedTabs = await chrome.tabs.query({ pinned: true, windowId: currentWindow.id });
-
-    // Remove favicon elements for tabs that are no longer pinned
-    Array.from(pinnedFavicons.children).forEach(element => {
-        // Only remove elements that are pinned favicons (have the pinned-favicon class)
-        if (element.classList.contains('pinned-favicon')) {
-            const tabId = element.dataset.tabId;
-            if (!pinnedTabs.some(tab => tab.id.toString() === tabId)) {
-                element.remove();
-            }
-        }
-    });
-
-    pinnedTabs.forEach(tab => {
-        // Check if favicon element already exists for this tab
-        const existingElement = pinnedFavicons.querySelector(`[data-tab-id="${tab.id}"]`);
-        if (!existingElement) {
-            const faviconElement = document.createElement('div');
-            faviconElement.className = 'pinned-favicon';
-            faviconElement.title = tab.title;
-            faviconElement.dataset.tabId = tab.id;
-            faviconElement.draggable = true; // Make pinned favicon draggable
-
+    if (!currentWindow) return;
+    const generation = ++favoriteRenderGeneration;
+    try {
+        const view = await favoriteRequest('get');
+        if (generation !== favoriteRenderGeneration) return;
+        const container = document.getElementById('pinnedFavicons');
+        if (container.querySelector('.dragging')) return;
+        container.querySelectorAll('.pinned-favicon').forEach(el => el.remove());
+        for (const favorite of view.bookmarks) {
+            const binding = view.tabs.find(tab => tab.bookmarkId === favorite.bookmarkId && tab.windowId === currentWindow.id && tab.pinned);
+            const element = document.createElement('div');
+            element.className = 'pinned-favicon';
+            element.classList.toggle('active', Boolean(binding?.active));
+            element.title = favorite.title || favorite.url;
+            element.dataset.bookmarkId = favorite.bookmarkId;
+            element.dataset.url = favorite.url;
+            if (binding) element.dataset.tabId = binding.tabId;
+            element.draggable = true;
             const img = document.createElement('img');
-            img.src = Utils.getFaviconUrl(tab.url, "96");
-            img.onerror = () => {
-                img.src = tab.favIconUrl;
-                img.onerror = () => { img.src = 'assets/default_icon.png'; }; // Fallback favicon
-            };
-            img.alt = tab.title;
-
-            faviconElement.appendChild(img);
-            faviconElement.addEventListener('mousedown', (event) => {
-                if (event.button === MOUSE_BUTTON.LEFT) {
-                    clearAllActiveStates();
-                    // Add active class to clicked tab
-                    faviconElement.classList.add('active');
-                    chrome.tabs.update(tab.id, { active: true });
-                }
-            });
-
-            // Add drag event listeners for pinned favicon
-            faviconElement.addEventListener('dragstart', () => {
-                faviconElement.classList.add('dragging');
-            });
-
-            faviconElement.addEventListener('dragend', () => {
-                faviconElement.classList.remove('dragging');
-            });
-
-            pinnedFavicons.appendChild(faviconElement);
-        }
-    });
-
-    pinnedTabs.sort((a, b) => a.index - b.index).forEach(tab => {
-        const element = pinnedFavicons.querySelector(`[data-tab-id="${tab.id}"]`);
-        if (element) pinnedFavicons.appendChild(element);
-    });
-
-    // Show/hide placeholder based on whether there are pinned tabs
-    const placeholderContainer = pinnedFavicons.querySelector('.pinned-placeholder-container');
-    if (placeholderContainer) {
-        if (pinnedTabs.length === 0) {
-            placeholderContainer.style.display = 'block';
-        } else {
-            placeholderContainer.style.display = 'none';
-        }
-    }
-
-    // Add drag and drop event listeners ONCE. updatePinnedFavicons() is called from many
-    // handlers; re-adding these container listeners every call leaked duplicate handlers
-    // that fired repeatedly (B8). Guard on a dataset flag so they bind exactly once.
-    if (!pinnedFavicons.dataset.dragListenersBound) {
-        pinnedFavicons.dataset.dragListenersBound = 'true';
-    pinnedFavicons.addEventListener('dragover', e => {
-        e.preventDefault();
-        e.currentTarget.classList.add('drag-over');
-
-        // Show drop indicator for horizontal favicons
-        const draggingElement = document.querySelector('.dragging');
-        if (draggingElement) {
-            const afterElement = getDragAfterElementFavicon(pinnedFavicons, e.clientX);
-            if (afterElement) {
-                // Check if this is a placeholder (empty container)
-                if (afterElement.classList.contains('pinned-placeholder-container')) {
-                    // Show visual feedback on the placeholder itself
-                    afterElement.classList.add('drag-over');
-                    hideAllDropIndicators(); // Don't show traditional indicators for placeholders
-                } else {
-                    // Show traditional drop indicators for actual favicons
-                    const position = getDropPosition(afterElement, e.clientX, e.clientY, true);
-                    showDropIndicator(afterElement, position, true);
-                    // Remove any placeholder drag-over state
-                    const placeholder = pinnedFavicons.querySelector('.pinned-placeholder-container');
-                    if (placeholder) placeholder.classList.remove('drag-over');
-                }
-            } else {
-                hideAllDropIndicators();
-                // Remove any placeholder drag-over state
-                const placeholder = pinnedFavicons.querySelector('.pinned-placeholder-container');
-                if (placeholder) placeholder.classList.remove('drag-over');
-            }
-        }
-    });
-
-    pinnedFavicons.addEventListener('dragleave', e => {
-        e.preventDefault();
-        e.currentTarget.classList.remove('drag-over');
-        // Hide indicators when leaving the pinned favicons area
-        if (!pinnedFavicons.contains(e.relatedTarget)) {
-            hideAllDropIndicators();
-            // Remove any placeholder drag-over state
-            const placeholder = pinnedFavicons.querySelector('.pinned-placeholder-container');
-            if (placeholder) placeholder.classList.remove('drag-over');
-        }
-    });
-
-    pinnedFavicons.addEventListener('drop', async e => {
-        e.preventDefault();
-        e.currentTarget.classList.remove('drag-over');
-        hideAllDropIndicators(); // Clean up indicators on drop
-        // Remove any placeholder drag-over state
-        const placeholder = pinnedFavicons.querySelector('.pinned-placeholder-container');
-        if (placeholder) placeholder.classList.remove('drag-over');
-        const draggingElement = document.querySelector('.dragging');
-        if (draggingElement && draggingElement.dataset.tabId) {
-            const tabId = parseInt(draggingElement.dataset.tabId);
-
-            // If dragging a pinned favicon to reorder, handle positioning
-            if (draggingElement.classList.contains('pinned-favicon')) {
-                const afterElement = getDragAfterElementFavicon(pinnedFavicons, e.clientX);
-                if (afterElement) {
-                    // Check if this is a placeholder (empty container)
-                    if (afterElement.classList.contains('pinned-placeholder-container')) {
-                        // Empty container - append directly and hide placeholder
-                        pinnedFavicons.appendChild(draggingElement);
-                        afterElement.style.display = 'none';
-                    } else {
-                        // Normal positioning logic for actual favicons
-                        const position = getDropPosition(afterElement, e.clientX, e.clientY, true);
-
-                        // Position element based on indicator logic
-                        if (position === 'left') {
-                            pinnedFavicons.insertBefore(draggingElement, afterElement);
-                        } else { // 'right'
-                            const nextSibling = afterElement.nextElementSibling;
-                            if (nextSibling) {
-                                pinnedFavicons.insertBefore(draggingElement, nextSibling);
-                            } else {
-                                pinnedFavicons.appendChild(draggingElement);
-                            }
-                        }
-                    }
-                } else {
-                    // Fallback: append to end
-                    pinnedFavicons.appendChild(draggingElement);
-                }
-                const ids = [...pinnedFavicons.querySelectorAll('.pinned-favicon[data-tab-id]')]
-                    .map(el => Number(el.dataset.tabId));
-                for (let index = 0; index < ids.length; index++) {
-                    const live = await chrome.tabs.get(ids[index]);
-                    if (live.pinned && live.windowId === currentWindow.id) await chrome.tabs.move(live.id, { index });
-                }
+            img.src = Utils.getFaviconUrl(favorite.url, '96');
+            img.alt = favorite.title || favorite.url;
+            img.onerror = () => { img.onerror = null; img.src = 'assets/default_icon.png'; };
+            element.appendChild(img);
+            element.addEventListener('mousedown', async event => {
+                if (event.button !== MOUSE_BUTTON.LEFT) return;
+                try { await favoriteRequest('open', { bookmarkId: favorite.bookmarkId, windowId: currentWindow.id }); }
+                catch (error) { Logger.error('Could not open favorite:', error); }
                 await updatePinnedFavicons();
-            } else {
-                // Dragging a regular tab to make it pinned
-                const afterElement = getDragAfterElementFavicon(pinnedFavicons, e.clientX);
-                let position = null;
-                let targetIndex = 0; // Default to index 0 for empty containers
-
-                if (afterElement) {
-                    if (afterElement.classList.contains('pinned-placeholder-container')) {
-                        // Empty container - use index 0 and hide placeholder after pinning
-                        targetIndex = 0;
-                    } else {
-                        // Normal positioning logic for actual favicons
-                        position = getDropPosition(afterElement, e.clientX, e.clientY, true);
-                        targetIndex = calculatePinnedTabIndex(afterElement, position, pinnedFavicons);
-                    }
-                }
-
-                // Step 1: Pin the tab (this adds it to the end by default)
-                await chrome.tabs.update(tabId, { pinned: true });
-
-                // Step 2: Move it to the correct position if needed
-                if (targetIndex !== undefined && targetIndex >= 0) {
-                    try {
-                        await chrome.tabs.move(tabId, { index: targetIndex });
-                    } catch (error) {
-                        Logger.warn('Error moving pinned tab to target index:', error);
-                    }
-                }
-
-                // Step 3: Update the favicon display
-                updatePinnedFavicons();
-
-                // Hide placeholder if this was an empty container
-                if (afterElement && afterElement.classList.contains('pinned-placeholder-container')) {
-                    afterElement.style.display = 'none';
-                }
-
-                // Remove the tab from its original container
-                draggingElement.remove();
-            }
+            });
+            element.addEventListener('contextmenu', event => {
+                event.preventDefault();
+                document.getElementById('favorite-context-menu')?.remove();
+                const menu = document.createElement('div');
+                menu.id = 'favorite-context-menu';
+                menu.className = 'context-menu';
+                menu.style.left = `${event.clientX}px`;
+                menu.style.top = `${event.clientY}px`;
+                const remove = document.createElement('div');
+                remove.className = 'context-menu-item';
+                remove.textContent = 'Remove from Favorites';
+                remove.addEventListener('click', async () => {
+                    menu.remove();
+                    try { await favoriteRequest('remove', { bookmarkId: favorite.bookmarkId }); }
+                    catch (error) { Logger.error('Could not remove favorite:', error); }
+                    await updatePinnedFavicons();
+                });
+                menu.appendChild(remove);
+                document.body.appendChild(menu);
+                document.addEventListener('click', () => menu.remove(), { once: true });
+            });
+            element.addEventListener('dragstart', () => element.classList.add('dragging'));
+            element.addEventListener('dragend', () => { element.classList.remove('dragging'); updatePinnedFavicons(); });
+            container.appendChild(element);
         }
-    });
-    } // end bind-once guard for pinnedFavicons drag listeners
+        const placeholder = container.querySelector('.pinned-placeholder-container');
+        if (placeholder) placeholder.style.display = view.bookmarks.length ? 'none' : 'block';
+        if (container.dataset.dragListenersBound) return;
+        container.dataset.dragListenersBound = 'true';
+        container.addEventListener('dragover', event => { event.preventDefault(); container.classList.add('drag-over'); });
+        container.addEventListener('dragleave', event => {
+            if (!container.contains(event.relatedTarget)) container.classList.remove('drag-over');
+        });
+        container.addEventListener('drop', async event => {
+            event.preventDefault();
+            container.classList.remove('drag-over');
+            const dragging = document.querySelector('.dragging');
+            if (!dragging) return;
+            const elements = [...container.querySelectorAll('.pinned-favicon')];
+            const before = elements.map(el => el.dataset.bookmarkId);
+            const others = elements.filter(el => el !== dragging);
+            // Both wrapped flex rows and the four-column grid use DOM order.
+            let index = others.findIndex(el => {
+                const rect = el.getBoundingClientRect();
+                return event.clientY < rect.top || (event.clientY <= rect.bottom && event.clientX < rect.left + rect.width / 2);
+            });
+            if (index < 0) index = others.length;
+            try {
+                if (dragging.classList.contains('pinned-favicon')) {
+                    const after = others.map(el => el.dataset.bookmarkId);
+                    after.splice(index, 0, dragging.dataset.bookmarkId);
+                    await favoriteRequest('reorder', { before, after });
+                } else {
+                    await favoriteRequest('add', { tabId: dragging.dataset.tabId ? Number(dragging.dataset.tabId) : undefined,
+                        url: dragging.dataset.pinnedUrl || dragging.dataset.url,
+                        title: dragging.querySelector('.tab-title-display')?.textContent,
+                        windowId: currentWindow.id, index });
+                }
+            } catch (error) { Logger.error('Could not save favorite drop:', error); alert(error.message); }
+            finally { dragging.classList.remove('dragging'); await updatePinnedFavicons(); }
+        });
+    } catch (error) { Logger.warn('Favorites could not be refreshed:', error); }
 }
 
 // Utility function to activate a pinned tab by URL (reuses existing bookmark opening logic)
@@ -534,6 +419,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Listen for storage changes to re-apply colors when they're updated
     chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'session' && changes.globalFavoriteView) updatePinnedFavicons();
         if (areaName === 'sync' && changes.colorOverrides) {
             Logger.log('Color overrides changed, re-applying...');
             applyColorOverrides();
@@ -1508,21 +1394,14 @@ function updatePinnedSectionPlaceholders() {
 
 // Convert favorite tab (pinned-favicon) to proper tab element
 async function convertFavoriteToTab(draggingElement, targetIsPinned) {
-    const tabId = parseInt(draggingElement.dataset.tabId);
-
-    // Unpin from Chrome favorites
-    await chrome.tabs.update(tabId, { pinned: false });
-
-    // Get fresh tab data and create proper UI element
-    const tab = await chrome.tabs.get(tabId);
+    const view = await favoriteRequest('open', { bookmarkId: draggingElement.dataset.bookmarkId, windowId: currentWindow.id });
+    const binding = view.tabs.find(tab => tab.bookmarkId === draggingElement.dataset.bookmarkId && tab.windowId === currentWindow.id && tab.pinned);
+    if (!binding) throw new Error('Favorite tab is unavailable.');
+    await chrome.tabs.update(binding.tabId, { pinned: false });
+    const tab = await chrome.tabs.get(binding.tabId);
     const newTabElement = await createTabElement(tab, targetIsPinned, false);
-
-    // Replace the small favicon with full tab element
     draggingElement.replaceWith(newTabElement);
-
-    // Refresh favorites area to remove the original
-    updatePinnedFavicons();
-
+    await updatePinnedFavicons();
     return { tab, newTabElement };
 }
 
@@ -1634,7 +1513,7 @@ async function handleBookmarkOperations(event, draggingElement, container, targe
             updatePinnedSectionPlaceholders();
             throw error;
         }
-    } else if (container.dataset.tabType === 'temporary' && draggingElement.dataset.tabId) {
+    } else if (container.dataset.tabType === 'temporary' && (draggingElement.dataset.tabId || draggingElement.classList.contains('pinned-favicon'))) {
         // Handle favorite tab conversion
         if (draggingElement.classList.contains('pinned-favicon')) {
             const { tab } = await convertFavoriteToTab(draggingElement, false);
@@ -3040,7 +2919,7 @@ function handleTabUpdate(tabId, changeInfo, tab) {
         Logger.log('Tab updated:', tabId, changeInfo, spaces);
 
         // Update tab element if it exists
-        const tabElement = document.querySelector(`[data-tab-id="${tabId}"]`);
+        const tabElement = document.querySelector(`.tab[data-tab-id="${tabId}"]`);
         if (tabElement) {
             // Update Favicon if URL changed
             if (changeInfo.url || changeInfo.favIconUrl) {
