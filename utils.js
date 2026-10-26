@@ -91,7 +91,6 @@ const Utils = {
             autoArchiveEnabled: false, // Default: disabled
             autoArchiveIdleMinutes: 360, // Default: 6 hours
             syncTabGroups: false,
-            invertTabOrder: true, // Default: enabled (New tabs/High index on top)
             colorOverrides: null, // Default: no color overrides
             debugLoggingEnabled: false, // Default: disabled (controls debug logging)
             showAllOpenTabsInCollapsedFolders: false, // Default: Arc behavior (only show active tab in collapsed folder)
@@ -341,16 +340,6 @@ const Utils = {
     setUseArcLikePositioning: async function (enabled) {
         await chrome.storage.sync.set({ useArcLikePositioning: enabled });
     },
-
-    getInvertTabOrder: async function () {
-        const settings = await this.getSettings();
-        return settings.invertTabOrder;
-    },
-
-    setInvertTabOrder: async function (enabled) {
-        await chrome.storage.sync.set({ invertTabOrder: enabled });
-    },
-
 
     // Navigate to adjacent tab within a space (next or previous)
     _navigateTabInSpace: async function (tabId, sourceSpace, direction) {
