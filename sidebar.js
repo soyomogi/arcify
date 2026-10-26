@@ -687,7 +687,14 @@ async function adoptStoredSpaces(next, { render = true } = {}) {
     }
     const projection = list => JSON.stringify(list.map(({ id, name, color, bookmarkFolderId, spaceBookmarks, temporaryTabs }) =>
         ({ id, name, color, bookmarkFolderId, spaceBookmarks, temporaryTabs })));
-    const needsRender = projection(spaces) !== projection(next);
+    const { activeSpaces = {} } = await chrome.storage.session.get('activeSpaces');
+    const selected = activeSpaces[currentWindow.id];
+    const selectionChanged = selected !== activeSpaceId && next.some(s => s.id === selected);
+    const needsRender = selectionChanged || projection(spaces) !== projection(next);
+    if (selectionChanged) {
+        previousSpaceId = activeSpaceId;
+        activeSpaceId = selected;
+    }
     const old = spaces;
     const oldMetadata = new Map(old.map(s => [s.id, { name: s.name, color: s.color }]));
     spaces = next.map(space => {
@@ -763,8 +770,11 @@ async function initSidebar() {
     sidebarReady = true;
     refreshCoordinator.schedule();
     chrome.storage.onChanged.addListener((changes, area) => {
-        if (area !== 'local' || !changes.spaces || !sidebarReady) return;
-        scheduleStoredSpacesRefresh();
+        if (!sidebarReady) return;
+        if ((area === 'local' && changes.spaces) || (area === 'session' && changes.activeSpaces
+            && changes.activeSpaces.newValue?.[currentWindow.id] !== changes.activeSpaces.oldValue?.[currentWindow.id])) {
+            scheduleStoredSpacesRefresh();
+        }
     });
     await offerTabGroupImport();
 }

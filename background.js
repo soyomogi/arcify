@@ -14,6 +14,7 @@ registerTourMessages();
  */
 
 import { SpaceStore, ownerOf } from './space-store.js';
+import { createSpaceShortcutHandler } from './space-shortcuts.js';
 import { isProtectedFavorite } from './favorite-safety.js';
 import { registerBookmarkListeners } from './bookmark-events.js';
 import { enqueueBookmarkOperation } from './bookmark-writer.js';
@@ -22,6 +23,7 @@ registerBookmarkListeners();
 
 const spaceStore = new SpaceStore();
 spaceStore.install();
+const handleSpaceShortcut = createSpaceShortcutHandler(spaceStore);
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type !== 'spaceStore') return;
     spaceStore.dispatch(message).then(spaces => sendResponse({ success: true, spaces }), error => sendResponse({ success: false, error: error.message }));
@@ -103,8 +105,12 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     }
 });
 
-chrome.commands.onCommand.addListener(async function (command) {
-    if (command === "quickPinToggle") {
+chrome.commands.onCommand.addListener(async function (command, tab) {
+    const switching = handleSpaceShortcut(command, tab);
+    if (switching) {
+        try { await switching; }
+        catch (error) { Logger.error('Could not switch space:', error); }
+    } else if (command === "quickPinToggle") {
         // Send a message to the sidebar
         chrome.runtime.sendMessage({ command: "quickPinToggle" });
     } else if (command === "NextTabInSpace") {

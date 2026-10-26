@@ -2,11 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { createSpaceShortcutHandler } from '../../space-shortcuts.js';
 
 const source = readFileSync(new URL('../../background.js', import.meta.url), 'utf8')
     .replace(/^import .*;\s*$/gm, '');
 function background(completed = false, onboardingVersion = undefined, version = '5.1.0') {
-    const installed = [], messages = [], opened = [];
+    const installed = [], messages = [], opened = [], commands = [], spaceRequests = [];
     const event = { addListener() {} };
     const chrome = {
         runtime: {
@@ -16,7 +17,7 @@ function background(completed = false, onboardingVersion = undefined, version = 
             getManifest: () => ({ version })
         },
         sidePanel: { setPanelBehavior: async () => {} },
-        commands: { onCommand: event },
+        commands: { onCommand: { addListener: listener => commands.push(listener) } },
         alarms: { onAlarm: event, clear: async () => {} },
         storage: { onChanged: event, sync: { get: async () => ({ onboardingCompleted: completed, onboardingVersion }) } },
         tabs: { create: async tab => opened.push(tab), onActivated: event, onUpdated: event, onRemoved: event }
@@ -24,12 +25,13 @@ function background(completed = false, onboardingVersion = undefined, version = 
     runInNewContext(source, {
         chrome, console, registerTourMessages() {},
         registerBookmarkListeners() {},
+        createSpaceShortcutHandler,
         enqueueBookmarkOrder: async () => [],
-        SpaceStore: class { install() {} async dispatch() { return [{ id: 'home' }]; } },
+        SpaceStore: class { install() {} async dispatch(message) { spaceRequests.push(message); return [{ id: 'home' }]; } },
         Utils: { getSettings: async () => ({ autoArchiveEnabled: false }) },
         Logger: { log() {}, error() {} }
     });
-    return { installed, messages, opened };
+    return { installed, messages, opened, commands, spaceRequests };
 }
 
 test('a fresh install opens the onboarding guide once', async () => {
@@ -68,4 +70,11 @@ test('space-store replies are not intercepted by unrelated Promise listeners', a
     assert.equal(replies.length, 1);
     assert.equal(replies[0].success, true);
     assert.equal(replies[0].spaces[0].id, 'home');
+});
+
+test('background routes space commands to the store using the command tab window', async () => {
+    const app = background();
+    await Promise.all(app.commands.map(listener => listener('selectSpace4', { windowId: 42 })));
+    assert.equal(app.spaceRequests.length, 1);
+    assert.deepEqual(app.spaceRequests[0], { action: 'switch', windowId: 42, index: 3 });
 });

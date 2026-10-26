@@ -61,7 +61,7 @@ tests/
 
 ### Bookmarks (`bookmarks.test.js`)
 - Tab pinning/unpinning
-- Keyboard shortcut (Alt+D) for quick pin
+- Quick pin command (no default shortcut)
 - Pinned tabs display
 - Space bookmark management
 - Bookmark persistence

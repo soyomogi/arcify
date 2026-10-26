@@ -46,7 +46,7 @@ export function applySpacePatch(current, before, after) {
 }
 
 export class SpaceStore {
-    constructor() { this.chain = Promise.resolve(); this.initialized = false; }
+    constructor() { this.chain = Promise.resolve(); this.initialized = false; this.selectionVersions = new Map(); }
     run(operation) {
         const pending = this.chain.then(async () => { await this.initialize(); return operation(); });
         this.chain = pending.catch(console.error);
@@ -204,6 +204,31 @@ export class SpaceStore {
         try { await syncSpaceGroups(this.spaces, this.active); }
         catch (error) { console.warn('Tab group sync deferred:', error); }
     }
+    // Called inside the store queue so target selection, tab activation and
+    // persistence complete before the next shortcut reads the selected space.
+    async switchSpace({ windowId, index, offset }) {
+        if (!Number.isInteger(windowId) || windowId < 0) return;
+        await this.discoverBookmarkSpaces();
+        const tabs = await chrome.tabs.query({ windowId });
+        if (offset !== undefined) {
+            const selected = this.spaces.findIndex(s => s.id === this.active[windowId]);
+            const current = selected >= 0 ? selected
+                : this.spaces.findIndex(s => s.id === ownerOf(this.spaces, tabs.find(t => t.active)?.id)?.id);
+            index = ((current >= 0 ? current : 0) + offset + this.spaces.length) % this.spaces.length;
+        }
+        const space = this.spaces[index];
+        if (!space) return;
+        this.selectionVersions.set(windowId, (this.selectionVersions.get(windowId) || 0) + 1);
+        const byId = new Map(tabs.filter(t => !t.pinned).map(t => [t.id, t]));
+        const owned = tabIds(space).map(id => byId.get(id)).filter(Boolean);
+        const tab = owned.find(t => t.id === space.lastTab) || owned[owned.length - 1];
+        if (tab) {
+            await chrome.tabs.update(tab.id, { active: true });
+            space.lastTab = tab.id;
+        }
+        // Empty spaces still become selected; new tabs will belong to them.
+        this.active[windowId] = space.id;
+    }
     async dispatch(message) {
         return this.run(async () => {
             switch (message.action) {
@@ -221,6 +246,7 @@ export class SpaceStore {
                     if (!this.spaces.length) this.spaces.push(await this.makeSpace(this.defaultSpaceName));
                     break;
                 case 'activate': this.active[message.windowId] = message.spaceId; break;
+                case 'switch': await this.switchSpace(message); break;
                 case 'assign': {
                     const target = this.spaces.find(s => s.id === message.spaceId);
                     if (target) {
@@ -274,10 +300,17 @@ export class SpaceStore {
                 if (space.lastTab === removed) space.lastTab = added;
             }
         }));
-        chrome.tabs.onActivated.addListener(info => handle(() => {
-            const space = ownerOf(this.spaces, info.tabId);
-            if (space) { space.lastTab = info.tabId; this.active[info.windowId] = space.id; }
-        }));
+        chrome.tabs.onActivated.addListener(info => {
+            const version = this.selectionVersions.get(info.windowId);
+            return handle(async () => {
+                // An activation event can wait behind newer shortcut operations.
+                if (version !== this.selectionVersions.get(info.windowId)) return;
+                const [activeTab] = await chrome.tabs.query({ windowId: info.windowId, active: true });
+                if (activeTab?.id !== info.tabId) return;
+                const space = ownerOf(this.spaces, info.tabId);
+                if (space) { space.lastTab = info.tabId; this.active[info.windowId] = space.id; }
+            });
+        });
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area === 'local' && (changes.pinnedTabStatesById || changes.tabNameOverridesById)) handle(() => {});
             if (area === 'sync' && changes.syncTabGroups) handle(() => {});
