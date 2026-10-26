@@ -12,12 +12,8 @@ export function mergeVisibleOrder(allIds, visibleIds) {
     return [...result, ...visibleIds.slice(index)];
 }
 
-export function canonicalOrderFromDisplay(displayIds, inverted) {
-    return inverted ? [...displayIds].reverse() : [...displayIds];
-}
-
-export function mergeCapturedTemporaryOrder(allIds, displayIds, inverted) {
-    return mergeVisibleOrder(allIds, canonicalOrderFromDisplay(displayIds, inverted));
+export function mergeCapturedTemporaryOrder(allIds, displayIds) {
+    return mergeVisibleOrder(allIds, displayIds);
 }
 
 export async function saveBookmarkOperation(operation) {

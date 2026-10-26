@@ -20,7 +20,7 @@ import { SpacePatchQueue } from './space-patch-queue.js';
 import { RefreshCoordinator } from './refresh-coordinator.js';
 import { EditSessionRegistry } from './edit-sessions.js';
 import { isProtectedFavorite } from './favorite-safety.js';
-import { selectWindowSpaceTabs, mergeVisibleOrder, mergeCapturedTemporaryOrder, canonicalOrderFromDisplay, saveBookmarkOperation } from './sidebar-tabs.js';
+import { selectWindowSpaceTabs, mergeVisibleOrder, mergeCapturedTemporaryOrder, saveBookmarkOperation } from './sidebar-tabs.js';
 import { ownerOf } from './space-store.js';
 import { canCreateFolder, createFolder } from './folder-policy.js';
 import { loadFolderCollapsed, saveFolderCollapsed } from './folder-state.js';
@@ -537,16 +537,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (areaName === 'sync' && changes.colorOverrides) {
             Logger.log('Color overrides changed, re-applying...');
             applyColorOverrides();
-        }
-
-        // Re-render active space when tab order inversion setting changes
-        if (areaName === 'sync' && changes.invertTabOrder) {
-            Logger.log('invertTabOrder changed, refreshing active space UI...');
-            if (refreshActiveSpaceUITimeout) clearTimeout(refreshActiveSpaceUITimeout);
-            refreshActiveSpaceUITimeout = setTimeout(() => {
-                refreshActiveSpaceUITimeout = null;
-                refreshActiveSpaceUI();
-            }, 50);
         }
 
         if (areaName === 'sync' && changes.showAllOpenTabsInCollapsedFolders) {
@@ -1442,7 +1432,7 @@ async function moveTabToPinned(space, tab) {
     await refreshActiveSpaceUI();
 }
 
-async function moveTabToTemp(space, tab, { temporaryDisplayOrder = null, inverted = false, refresh = true } = {}) {
+async function moveTabToTemp(space, tab, { temporaryDisplayOrder = null, refresh = true } = {}) {
     space = spaces.find(s => s.id === space.id);
     if (!space) return;
     await removeSpacePin(space, tab);
@@ -1453,7 +1443,7 @@ async function moveTabToTemp(space, tab, { temporaryDisplayOrder = null, inverte
         space.temporaryTabs.push(tab.id);
     }
     if (temporaryDisplayOrder) {
-        space.temporaryTabs = mergeCapturedTemporaryOrder(space.temporaryTabs, temporaryDisplayOrder, inverted);
+        space.temporaryTabs = mergeCapturedTemporaryOrder(space.temporaryTabs, temporaryDisplayOrder);
     }
 
     // No longer a space-pinned tab; clear pinned state mapping.
@@ -1722,7 +1712,6 @@ async function handleBookmarkOperations(event, draggingElement, container, targe
                 targetContent: dropIntent.bookmarkTargetContent,
                 draggingElement,
                 rootId: spaceFolder.id,
-                inverted: dropIntent.inverted,
                 tab
             });
             const result = await saveBookmarkOperation(operation);
@@ -1775,7 +1764,6 @@ async function handleBookmarkOperations(event, draggingElement, container, targe
                 if (space.spaceBookmarks.includes(tab.id)) {
                     await moveTabToTemp(space, tab, {
                         temporaryDisplayOrder: dropIntent?.temporaryDisplayOrder,
-                        inverted: dropIntent?.inverted,
                         refresh: false
                     });
                     return { orderHandled: true };
@@ -1856,7 +1844,7 @@ function bookmarkParentIdForContent(content, rootId) {
     return String(content.closest('.folder')?.dataset.bookmarkId || rootId);
 }
 
-function makeBookmarkDropOperation({ sourceContent, targetContent, draggingElement, rootId, inverted, tab }) {
+function makeBookmarkDropOperation({ sourceContent, targetContent, draggingElement, rootId, tab }) {
     const bookmarkId = draggingElement.dataset.bookmarkId || null;
     const sourceParentId = bookmarkId ? bookmarkParentIdForContent(sourceContent, rootId) : null;
     const targetParentId = bookmarkParentIdForContent(targetContent, rootId);
@@ -1864,7 +1852,7 @@ function makeBookmarkDropOperation({ sourceContent, targetContent, draggingEleme
     const parents = parentIds.map(parentId => {
         const content = parentId === targetParentId ? targetContent : sourceContent;
         const displayIds = orderedBookmarkKeys(content, draggingElement);
-        const desiredCanonicalIds = canonicalOrderFromDisplay(displayIds, inverted);
+        const desiredCanonicalIds = [...displayIds];
         const expectedCanonicalIds = bookmarkOrderBaselines.get(parentId);
         if (!expectedCanonicalIds) throw new Error('The bookmark order baseline is unavailable. Refresh and retry.');
         return { parentId, expectedCanonicalIds: [...expectedCanonicalIds], desiredCanonicalIds };
@@ -1919,18 +1907,13 @@ async function handleArcifyOrderChangeAfterDropByTabId(tabId, container) {
     if (!space) return;
 
     const tabType = container.dataset.tabType;
-    const invertTabOrder = await Utils.getInvertTabOrder();
     if (tabType === 'temporary') {
-        // DOM order is display order (top->bottom). Canonical storage is extension order (left->right).
         const tempIdsDisplayOrder = getTempSectionTabIds(spaceElement);
-        const tempIdsChromeOrder = invertTabOrder ? [...tempIdsDisplayOrder].reverse() : tempIdsDisplayOrder;
-        // Preserve any non-rendered temp ids (should be rare), append to end.
-        space.temporaryTabs = mergeVisibleOrder(space.temporaryTabs ?? [], tempIdsChromeOrder);
+        // Retain other windows' slots while updating the visible order.
+        space.temporaryTabs = mergeVisibleOrder(space.temporaryTabs ?? [], tempIdsDisplayOrder);
     } else if (tabType === 'pinned') {
-        // DOM order is display order. Canonical storage is extension order.
         const pinnedIdsDisplayOrder = getFlattenedPinnedSectionTabIds(spaceElement);
-        const pinnedIdsChromeOrder = invertTabOrder ? [...pinnedIdsDisplayOrder].reverse() : pinnedIdsDisplayOrder;
-        space.spaceBookmarks = mergeVisibleOrder(space.spaceBookmarks ?? [], pinnedIdsChromeOrder);
+        space.spaceBookmarks = mergeVisibleOrder(space.spaceBookmarks ?? [], pinnedIdsDisplayOrder);
     } else {
         return;
     }
@@ -2064,13 +2047,11 @@ async function setupDragAndDrop(pinnedContainer, tempContainer) {
                     targetContainer.appendChild(draggingElement);
                 }
 
-                const dropInverted = await Utils.getInvertTabOrder();
                 const dropIntent = container.dataset.tabType === 'temporary'
-                    ? { temporaryDisplayOrder: getTempSectionTabIds(spaceElement), inverted: dropInverted }
+                    ? { temporaryDisplayOrder: getTempSectionTabIds(spaceElement) }
                     : {
                         bookmarkSourceContent: draggingElement.dataset.bookmarkId ? (sourceContent || originalContent) : targetContainer,
-                        bookmarkTargetContent: targetContainer,
-                        inverted: dropInverted
+                        bookmarkTargetContent: targetContainer
                     };
 
                 // Capture order before bookmark/storage awaits can emit a refresh notification.
@@ -2305,7 +2286,6 @@ async function renderSpaceTabs(space, pinnedContainer, tempContainer) {
     Logger.log('Loading tabs for space:', space.id);
     Logger.log('Space bookmarks in space:', space.spaceBookmarks);
     const representedPinnedTabIds = new Set();
-    const invertTabOrder = await Utils.getInvertTabOrder();
     const tabs = (await getOwnedTabs(space.id)).filter(t => !t.pinned);
     const pinnedStatesById = await Utils.getPinnedTabStates();
     const pinnedFragment = document.createDocumentFragment();
@@ -2322,8 +2302,7 @@ async function renderSpaceTabs(space, pinnedContainer, tempContainer) {
                 bookmarkOrderBaselines.set(String(node.id), bookmarks.map(item => String(item.id)));
                 Logger.log('Processing bookmarks:', bookmarks);
 
-                const itemsToRender = invertTabOrder ? [...bookmarks].reverse() : bookmarks;
-                for (const item of itemsToRender) {
+                for (const item of bookmarks) {
                     if (!item.url) {
                         // This is a folder
                         const folderTemplate = document.getElementById('folderTemplate');
@@ -2474,11 +2453,10 @@ async function renderSpaceTabs(space, pinnedContainer, tempContainer) {
     }
 
     const tempFragment = document.createDocumentFragment();
-    let tabsToLoad = [...new Set([
+    const tabsToLoad = [...new Set([
         ...space.temporaryTabs,
         ...space.spaceBookmarks.filter(id => !representedPinnedTabIds.has(id))
     ])];
-    if (invertTabOrder) tabsToLoad.reverse();
     for (const tabId of tabsToLoad) {
         const tab = tabs.find(t => t.id === tabId);
         if (!tab || representedPinnedTabIds.has(tabId)) continue;
@@ -2522,7 +2500,7 @@ async function renderSpaceTabs(space, pinnedContainer, tempContainer) {
     return true;
 }
 
-// Debounced UI refresh when settings change (e.g., invertTabOrder)
+// Debounced refresh of the active space
 let refreshActiveSpaceUITimeout = null;
 
 async function refreshActiveSpaceUI({ force = false } = {}) {
@@ -3512,79 +3490,13 @@ async function moveTabToSpace(tabId, spaceId, pinned = false, openerTabId = null
         else space.temporaryTabs.push(tabId);
     }
 
-    // 4. Update the UI (remove tab element from old section, create it in new section)
-    // Remove any existing DOM element for this tab
-    const oldTabElement = document.querySelector(`[data-tab-id="${tabId}"]`);
-    oldTabElement?.remove();
-
-    // Add a fresh tab element if needed
-    const spaceElement = document.querySelector(`[data-space-id="${spaceId}"]`);
-    if (spaceElement) {
-        const containerSelector = pinned ? '[data-tab-type="pinned"]' : '[data-tab-type="temporary"]';
-        const container = spaceElement.querySelector(containerSelector);
-
-        const chromeTab = await chrome.tabs.get(tabId);
-        if (chromeTab.windowId !== currentWindow.id) { await saveSpaces(); return; }
-        const tabElement = await createTabElement(chromeTab, pinned);
-        if (container.children.length > 1) {
-            if (openerTabId) {
-                let tabs = container.querySelectorAll(`.tab`);
-                const openerTabIndex = Array.from(tabs).findIndex(tab => tab.dataset.tabId == openerTabId);
-                if (openerTabIndex + 1 < tabs.length) {
-                    const tabToInsertBefore = tabs[openerTabIndex + 1];
-                    container.insertBefore(tabElement, tabToInsertBefore);
-                } else {
-                    container.appendChild(tabElement);
-                }
-            } else {
-                if (pinned) {
-                    // Add to the bottom after all existing elements
-                    container.appendChild(tabElement);
-                } else {
-                    // Render temporary tabs in extension order
-                    const ownedTabs = await getOwnedTabs(spaceId);
-                    const currentTabIndex = ownedTabs.findIndex(t => t.id === tabId);
-
-                    if (currentTabIndex !== -1 && ownedTabs.length > 1) {
-                        // First, add the new tab element to the container so it can be found in the filter
-                        container.appendChild(tabElement);
-
-                        // Filter to only include tabs in the temporary container (including the new one)
-                        const tabsInContainer = ownedTabs.filter(t => {
-                            return container.querySelector(`[data-tab-id="${t.id}"]`);
-                        });
-
-                        // Apply invert order if enabled
-                        const invertTabOrder = await Utils.getInvertTabOrder();
-                        if (invertTabOrder) {
-                            tabsInContainer.reverse();
-                        }
-
-                        // Re-append all tabs in correct order (including the new one)
-                        tabsInContainer.forEach(t => {
-                            const el = container.querySelector(`[data-tab-id="${t.id}"]`);
-                            if (el) {
-                                container.appendChild(el);
-                            }
-                        });
-                    } else {
-                        // Fallback: use simple insert logic
-                        const invertTabOrder = await Utils.getInvertTabOrder();
-                        if (invertTabOrder) {
-                            container.insertBefore(tabElement, container.firstChild);
-                        } else {
-                            container.appendChild(tabElement);
-                        }
-                    }
-                }
-            }
-        } else {
-            container.appendChild(tabElement);
-        }
+    // Use the same renderer as startup, refresh and drag/drop. Reconcile model
+    // order before rendering so moves never create a competing DOM-only order.
+    await saveSpaces();
+    for (const changed of new Set([sourceSpace, space].filter(Boolean))) {
+        const element = getSpaceElement(changed.id);
+        if (element) await loadTabs(changed, getPinnedContainer(element), getTempContainer(element));
     }
-
-    // 5. Save the updated spaces to storage
-    saveSpaces();
     } finally {
         // Always release the processing lock, even on the early `space not found`
         // return or any throw above — otherwise future moves for this tab are ignored.

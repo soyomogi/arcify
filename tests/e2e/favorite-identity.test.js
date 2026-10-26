@@ -38,6 +38,7 @@ beforeAll(async () => {
     page.on('pageerror', error => console.error('Sidebar error:', error.message));
     page.on('console', message => { if (message.type() === 'error') console.error('Sidebar console:', message.text()); });
     fixture = await page.evaluate(async url => {
+        await chrome.storage.sync.set({ invertTabOrder: true }); // A legacy value must have no effect.
         const { spaces } = await chrome.runtime.sendMessage({ type: 'spaceStore', action: 'get' });
         const space = spaces[0];
         const a = await chrome.tabs.create({ url, active: false });
@@ -127,8 +128,7 @@ test('favorite demotion keeps the captured middle temporary position after refre
     await page.waitForFunction(async ({ desired, favorite, spaceId }) => {
         const { spaces, pinnedTabStatesById = {} } = await chrome.storage.local.get(['spaces', 'pinnedTabStatesById']);
         const space = spaces.find(item => item.id === spaceId);
-        const { invertTabOrder = true } = await chrome.storage.sync.get({ invertTabOrder: true });
-        const display = invertTabOrder ? [...space.temporaryTabs].reverse() : space.temporaryTabs;
+        const display = space.temporaryTabs;
         const positions = desired.map(id => display.indexOf(id));
         return !pinnedTabStatesById[favorite] && positions.every(index => index >= 0) &&
             positions[0] < positions[1] && positions[1] < positions[2];
