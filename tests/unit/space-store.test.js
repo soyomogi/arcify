@@ -21,7 +21,18 @@ beforeEach(() => {
     globalThis.chrome = {
         runtime: { getURL: path => `chrome-extension://arcify/${path}` },
         storage: { local: area(local), session: area(session), sync: area(sync), onChanged: event() },
-        tabs: { onCreated: event(), onUpdated: event(), onRemoved: event(), onReplaced: event(), onActivated: event(), onMoved: event(), query: async query => tabs.filter(t => query.groupId === undefined || query.groupId === t.groupId),
+        tabs: { onCreated: event(), onUpdated: event(), onRemoved: event(), onReplaced: event(), onActivated: event(), onMoved: event(), query: async query => tabs.filter(t =>
+            (query.groupId === undefined || query.groupId === t.groupId)
+            && (query.windowId === undefined || query.windowId === t.windowId)
+            && (query.active === undefined || query.active === Boolean(t.active))),
+            update: async (id, attrs) => {
+                const tab = tabs.find(t => t.id === id);
+                assert.ok(tab, 'activation target must still exist');
+                mutations.push(['activate', id, attrs]);
+                tabs.filter(t => t.windowId === tab.windowId).forEach(t => { t.active = t.id === id; });
+                chrome.tabs.onActivated.emit({ tabId: id, windowId: tab.windowId });
+                return tab;
+            },
             group: async args => { mutations.push(['group', args]); const id = args.groupId ?? 100 + groups.length; if (!groups.some(g => g.id === id)) groups.push({ id, windowId: 1 }); tabs.filter(t => args.tabIds.includes(t.id)).forEach(t => t.groupId = id); return id; },
             move: async (...args) => mutations.push(['move', ...args]) },
         tabGroups: { onRemoved: event(), onUpdated: event(), query: async () => groups, update: async (id, attrs) => { mutations.push(['update', id, attrs]); Object.assign(groups.find(g => g.id === id), attrs); } },
@@ -216,4 +227,82 @@ test('sidebar reads discover later bookmark folders and follow folder renames by
     assert.equal(store.spaces.length, 3);
     assert.equal(store.spaces[2].bookmarkFolderId, 'later');
     assert.deepEqual(mutations, []);
+});
+
+test('space selection follows stored left-to-right order and missing positions do nothing', async () => {
+    local.spaces.reverse();
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'switch', index: 0, windowId: 1 });
+    assert.equal(session.activeSpaces[1], 'b');
+    assert.equal(tabs.find(t => t.active).id, 2);
+    mutations.length = 0;
+    await store.dispatch({ action: 'switch', index: 3, windowId: 1 });
+    assert.equal(session.activeSpaces[1], 'b');
+    assert.deepEqual(mutations, []);
+});
+
+test('selection only activates owned tabs in the originating window even with a foreign lastTab', async () => {
+    tabs.push({ id: 3, windowId: 2, active: true, url: 'https://foreign.test/' });
+    local.spaces[1].temporaryTabs.push(3);
+    local.spaces[1].lastTab = 3;
+    session.activeSpaces = { 2: 'a' };
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'switch', index: 1, windowId: 1 });
+    assert.deepEqual(session.activeSpaces, { 1: 'b', 2: 'a' });
+    assert.equal(tabs.find(t => t.id === 3).active, true);
+    assert.deepEqual(mutations, [['activate', 2, { active: true }]]);
+});
+
+test('selection restores the remembered local tab and otherwise falls back to the last owned tab', async () => {
+    tabs.push({ id: 3, windowId: 1, url: 'https://third.test/' });
+    local.spaces[1].temporaryTabs.push(3);
+    local.spaces[1].lastTab = 2;
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'switch', index: 1, windowId: 1 });
+    assert.equal(tabs.find(t => t.active).id, 2);
+    delete store.spaces[1].lastTab;
+    await store.dispatch({ action: 'switch', index: 1, windowId: 1 });
+    assert.equal(tabs.find(t => t.active).id, 3);
+});
+
+test('empty and foreign-only spaces select without stealing tabs; new tabs use the selection', async () => {
+    tabs[1].windowId = 2;
+    local.spaces.push(space('c'));
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'switch', index: 1, windowId: 1 });
+    assert.equal(session.activeSpaces[1], 'b');
+    await store.dispatch({ action: 'switch', index: 2, windowId: 1 });
+    assert.equal(session.activeSpaces[1], 'c');
+    assert.deepEqual(mutations, []);
+    const tab = { id: 4, windowId: 1, url: 'chrome://newtab/' };
+    tabs.push(tab);
+    await store.run(async () => { store.track(tab); await store.persist(); });
+    assert.equal(ownerOf(local.spaces, 4).id, 'c');
+});
+
+test('relative selection wraps and uses the active tab when no saved selection exists', async () => {
+    tabs[1].active = true;
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'switch', offset: 1, windowId: 1 });
+    assert.equal(session.activeSpaces[1], 'a');
+    await store.dispatch({ action: 'switch', offset: -1, windowId: 1 });
+    assert.equal(session.activeSpaces[1], 'b');
+});
+
+test('rapid relative commands serialize activation and persist the final empty selection despite queued events', async () => {
+    local.spaces.push(space('c'));
+    session.activeSpaces = { 1: 'a' };
+    const store = new SpaceStore();
+    store.install();
+    await store.run(() => {});
+    await Promise.all([
+        store.dispatch({ action: 'switch', offset: 1, windowId: 1 }),
+        store.dispatch({ action: 'switch', offset: 1, windowId: 1 }),
+        store.dispatch({ action: 'switch', offset: 1, windowId: 1 }),
+        store.dispatch({ action: 'switch', offset: 1, windowId: 1 }),
+        store.dispatch({ action: 'switch', offset: 1, windowId: 1 })
+    ]);
+    await store.run(() => {});
+    assert.deepEqual(mutations.map(m => m[1]), [2, 1, 2]);
+    assert.equal(session.activeSpaces[1], 'c');
 });

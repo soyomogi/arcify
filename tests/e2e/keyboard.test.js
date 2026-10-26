@@ -1,6 +1,6 @@
 /**
  * E2E Tests for Keyboard Shortcuts
- * Tests keyboard shortcut registration, pin/unpin via Alt+D, sidebar keyboard
+ * Tests keyboard shortcut registration, unassigned pin/unpin commands, sidebar keyboard
  * interactions, tab navigation, and keyboard accessibility
  */
 import {
@@ -81,30 +81,15 @@ describe('Keyboard Shortcuts', () => {
       }
     });
 
-    test('should have Alt+D command registered for quick pin/unpin', async () => {
-      try {
-        logTestStep('Checking for quickPinToggle (Alt+D) command...');
-
-        const pinCommand = await sidebarPage.evaluate(async () => {
-          const allCommands = await chrome.commands.getAll();
-          return allCommands.find(cmd => cmd.name === 'quickPinToggle') || null;
-        });
-
-        expect(pinCommand).not.toBeNull();
-        expect(pinCommand.name).toBe('quickPinToggle');
-        logTestStep(`quickPinToggle command found with shortcut: ${pinCommand.shortcut || '(default: Alt+D)'}`);
-
-        // Verify the shortcut is Alt+D (may vary by platform)
-        if (pinCommand.shortcut) {
-          expect(pinCommand.shortcut).toContain('D');
-          logTestStep(`Shortcut key confirmed: ${pinCommand.shortcut}`);
-        } else {
-          logTestStep('Shortcut key not explicitly set (uses manifest default Alt+D)');
-        }
-      } catch (error) {
-        await takeScreenshotOnFailure(sidebarPage, 'altd-registration-failure');
-        throw error;
+    test('keeps panel and quick pin commands unassigned by default', async () => {
+      const commands = await sidebarPage.evaluate(() => chrome.commands.getAll());
+      for (const name of ['_execute_action', 'quickPinToggle', 'nextSpace', 'previousSpace']) {
+        expect(commands.find(command => command.name === name)?.shortcut).toBe('');
       }
+      const defaults = commands.filter(command => command.shortcut);
+      expect(defaults.map(command => command.name).sort()).toEqual([
+        'selectSpace1', 'selectSpace2', 'selectSpace3', 'selectSpace4'
+      ]);
     });
 
     test('should have descriptions for all custom commands', async () => {
@@ -140,210 +125,6 @@ describe('Keyboard Shortcuts', () => {
         logTestStep('All custom commands have descriptions');
       } catch (error) {
         await takeScreenshotOnFailure(sidebarPage, 'command-descriptions-failure');
-        throw error;
-      }
-    });
-  });
-
-  describe('Pin/Unpin Shortcut (Alt+D)', () => {
-    test('should trigger pin/unpin command via keyboard shortcut', async () => {
-      try {
-        logTestStep('Testing Alt+D keyboard shortcut for pin/unpin...');
-
-        // Open a test page
-        const testPage = await browser.newPage();
-        await testPage.goto('https://www.example.com', { waitUntil: 'domcontentloaded' });
-        await delay(1000);
-
-        // Focus the test page and press Alt+D
-        await testPage.bringToFront();
-        await testPage.keyboard.down('Alt');
-        await testPage.keyboard.press('KeyD');
-        await testPage.keyboard.up('Alt');
-        await delay(1500);
-
-        // Close and reopen sidebar to check if tab state changed
-        await sidebarPage.close();
-        sidebarPage = await openSidebar(browser, extensionId);
-
-        // Check for pinned tabs in the visible space
-        const pinnedInfo = await sidebarPage.evaluate(() => {
-          const spaces = document.querySelectorAll('.space');
-          for (const space of spaces) {
-            if (space.style.display !== 'none') {
-              const pinnedSection = space.querySelector('[data-tab-type="pinned"]');
-              const pinnedTabs = pinnedSection ? pinnedSection.querySelectorAll('.tab').length : 0;
-              return { pinnedTabs, spaceFound: true };
-            }
-          }
-          return { pinnedTabs: 0, spaceFound: false };
-        });
-
-        if (pinnedInfo.pinnedTabs > 0) {
-          logTestStep(`Tab pinned via Alt+D shortcut (${pinnedInfo.pinnedTabs} pinned tabs found)`);
-        } else {
-          // Chrome extension keyboard shortcuts may not work in Puppeteer's headless mode
-          // because they rely on Chrome's internal command routing
-          logTestStep('WARNING: Alt+D shortcut may not work in Puppeteer headless mode');
-          logTestStep('Chrome extension commands rely on the browser command system');
-          logTestStep('which may not be fully available in automated testing');
-        }
-
-        // Don't fail the test - this is a known Puppeteer limitation
-        expect(pinnedInfo.spaceFound).toBe(true);
-      } catch (error) {
-        await takeScreenshotOnFailure(sidebarPage, 'altd-trigger-failure');
-        throw error;
-      }
-    });
-
-    test('should reflect pin state change in sidebar after Alt+D', async () => {
-      try {
-        logTestStep('Testing pin state change visibility in sidebar...');
-
-        // Open a test page
-        const testPage = await browser.newPage();
-        await testPage.goto('https://www.example.com', { waitUntil: 'domcontentloaded' });
-        await delay(1000);
-
-        // Close and reopen sidebar to establish baseline
-        await sidebarPage.close();
-        sidebarPage = await openSidebar(browser, extensionId);
-
-        // Get initial pinned count
-        const initialPinned = await sidebarPage.evaluate(() => {
-          const spaces = document.querySelectorAll('.space');
-          for (const space of spaces) {
-            if (space.style.display !== 'none') {
-              const pinnedSection = space.querySelector('[data-tab-type="pinned"]');
-              return pinnedSection ? pinnedSection.querySelectorAll('.tab').length : 0;
-            }
-          }
-          return 0;
-        });
-        logTestStep(`Initial pinned tabs: ${initialPinned}`);
-
-        // Focus the test page and press Alt+D
-        await testPage.bringToFront();
-        await testPage.keyboard.down('Alt');
-        await testPage.keyboard.press('KeyD');
-        await testPage.keyboard.up('Alt');
-        await delay(1500);
-
-        // Close and reopen sidebar to see updated state
-        await sidebarPage.close();
-        sidebarPage = await openSidebar(browser, extensionId);
-
-        const afterPinned = await sidebarPage.evaluate(() => {
-          const spaces = document.querySelectorAll('.space');
-          for (const space of spaces) {
-            if (space.style.display !== 'none') {
-              const pinnedSection = space.querySelector('[data-tab-type="pinned"]');
-              return pinnedSection ? pinnedSection.querySelectorAll('.tab').length : 0;
-            }
-          }
-          return 0;
-        });
-        logTestStep(`Pinned tabs after Alt+D: ${afterPinned}`);
-
-        if (afterPinned > initialPinned) {
-          expect(afterPinned).toBeGreaterThan(initialPinned);
-          logTestStep('Tab state changed after Alt+D - pin confirmed');
-        } else {
-          logTestStep('WARNING: Pin state did not change - Alt+D may not fire in headless mode');
-          logTestStep('This is a known limitation of testing Chrome extension commands in Puppeteer');
-        }
-      } catch (error) {
-        await takeScreenshotOnFailure(sidebarPage, 'pin-state-change-failure');
-        throw error;
-      }
-    });
-
-    test('should toggle pin/unpin with two Alt+D presses', async () => {
-      try {
-        logTestStep('Testing Alt+D toggle behavior (pin then unpin)...');
-
-        // Open a test page
-        const testPage = await browser.newPage();
-        await testPage.goto('https://www.example.com', { waitUntil: 'domcontentloaded' });
-        await delay(1000);
-
-        // Close and reopen sidebar to establish baseline
-        await sidebarPage.close();
-        sidebarPage = await openSidebar(browser, extensionId);
-
-        const baselinePinned = await sidebarPage.evaluate(() => {
-          const spaces = document.querySelectorAll('.space');
-          for (const space of spaces) {
-            if (space.style.display !== 'none') {
-              const pinnedSection = space.querySelector('[data-tab-type="pinned"]');
-              return pinnedSection ? pinnedSection.querySelectorAll('.tab').length : 0;
-            }
-          }
-          return 0;
-        });
-        logTestStep(`Baseline pinned tabs: ${baselinePinned}`);
-
-        // First press: Alt+D to pin
-        await testPage.bringToFront();
-        await testPage.keyboard.down('Alt');
-        await testPage.keyboard.press('KeyD');
-        await testPage.keyboard.up('Alt');
-        await delay(1500);
-
-        // Check state after first press
-        await sidebarPage.close();
-        sidebarPage = await openSidebar(browser, extensionId);
-
-        const afterFirstPress = await sidebarPage.evaluate(() => {
-          const spaces = document.querySelectorAll('.space');
-          for (const space of spaces) {
-            if (space.style.display !== 'none') {
-              const pinnedSection = space.querySelector('[data-tab-type="pinned"]');
-              return pinnedSection ? pinnedSection.querySelectorAll('.tab').length : 0;
-            }
-          }
-          return 0;
-        });
-        logTestStep(`Pinned tabs after first Alt+D: ${afterFirstPress}`);
-
-        // Second press: Alt+D to unpin
-        await testPage.bringToFront();
-        await testPage.keyboard.down('Alt');
-        await testPage.keyboard.press('KeyD');
-        await testPage.keyboard.up('Alt');
-        await delay(1500);
-
-        // Check state after second press
-        await sidebarPage.close();
-        sidebarPage = await openSidebar(browser, extensionId);
-
-        const afterSecondPress = await sidebarPage.evaluate(() => {
-          const spaces = document.querySelectorAll('.space');
-          for (const space of spaces) {
-            if (space.style.display !== 'none') {
-              const pinnedSection = space.querySelector('[data-tab-type="pinned"]');
-              return pinnedSection ? pinnedSection.querySelectorAll('.tab').length : 0;
-            }
-          }
-          return 0;
-        });
-        logTestStep(`Pinned tabs after second Alt+D: ${afterSecondPress}`);
-
-        if (afterFirstPress > baselinePinned && afterSecondPress === baselinePinned) {
-          logTestStep('Alt+D toggle works correctly: pin then unpin');
-        } else if (afterFirstPress === baselinePinned) {
-          logTestStep('WARNING: Alt+D did not trigger in headless mode');
-          logTestStep('Chrome extension commands may not fire in automated Puppeteer tests');
-        } else {
-          logTestStep(`Toggle state: baseline=${baselinePinned}, first=${afterFirstPress}, second=${afterSecondPress}`);
-        }
-
-        // Verify sidebar is functional regardless
-        const tabs = await getSidebarTabs(sidebarPage);
-        expect(tabs.length).toBeGreaterThan(0);
-      } catch (error) {
-        await takeScreenshotOnFailure(sidebarPage, 'altd-toggle-failure');
         throw error;
       }
     });

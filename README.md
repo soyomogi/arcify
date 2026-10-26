@@ -14,6 +14,16 @@ A Chrome extension that replicates Arc browser's tab management system, providin
 - Bookmark integration
 - Clean, minimal interface
 
+## Keyboard Shortcuts
+
+- Control+Q / W / E / R selects spaces 1–4 in the sidebar's left-to-right order, including on macOS (Control, not Command).
+- Space shortcuts work with the sidebar closed and only select tabs in the window where the command was invoked. Rapid commands run in order.
+- Next/previous space commands wrap around and have no default keys. Assign them in `chrome://extensions/shortcuts`.
+- Toggle side panel and Quick Pin/Unpin remain available without default keys (previously Alt+S and Alt+D), leaving the four default assignments for space selection.
+- Selecting an empty space keeps the current browser tab open; new tabs belong to the selected space. A shortcut for a space position that does not exist does nothing.
+
+The macOS modifier and four suggested shortcut limit follow the [Chrome Commands API](https://developer.chrome.com/docs/extensions/reference/api/commands).
+
 ## Development Setup
 
 ### Prerequisites

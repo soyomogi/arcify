@@ -51,16 +51,32 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": {
-        "default": "Alt+S"
-      },
       "description": "Toggle side panel"
     },
     "quickPinToggle": {
-      "suggested_key": {
-        "default": "Alt+D"
-      },
       "description": "Quick Pin/Unpin Tab"
+    },
+    "selectSpace1": {
+      "suggested_key": { "default": "Ctrl+Q", "mac": "MacCtrl+Q" },
+      "description": "Select the first space"
+    },
+    "selectSpace2": {
+      "suggested_key": { "default": "Ctrl+W", "mac": "MacCtrl+W" },
+      "description": "Select the second space"
+    },
+    "selectSpace3": {
+      "suggested_key": { "default": "Ctrl+E", "mac": "MacCtrl+E" },
+      "description": "Select the third space"
+    },
+    "selectSpace4": {
+      "suggested_key": { "default": "Ctrl+R", "mac": "MacCtrl+R" },
+      "description": "Select the fourth space"
+    },
+    "nextSpace": {
+      "description": "Navigate to the next space"
+    },
+    "previousSpace": {
+      "description": "Navigate to the previous space"
     },
     "NextTabInSpace": {
       "description": "Navigates to next tab in space"
