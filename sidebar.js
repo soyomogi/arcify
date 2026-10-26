@@ -1017,185 +1017,76 @@ function createSpaceElement(space) {
 }
 
 async function updateSpaceSwitcher() {
-    Logger.log('Updating space switcher...');
-    spaceSwitcher.innerHTML = '';
-
-    // --- Drag and Drop State ---
+    spaceSwitcher.replaceChildren();
+    const renderedIds = spaces.map(space => space.id);
     let draggedButton = null;
-
-    // --- Add listeners to the container ---
-    spaceSwitcher.addEventListener('dragover', (e) => {
-        e.preventDefault(); // Necessary to allow dropping
-        const currentlyDragged = document.querySelector('.dragging-switcher');
-        if (!currentlyDragged) return; // Don't do anything if not dragging a switcher button
-
-        const afterElement = getDragAfterElementSwitcher(spaceSwitcher, e.clientX);
-
-        // Remove placeholder classes from all buttons first
-        const buttons = spaceSwitcher.querySelectorAll('button');
-        buttons.forEach(button => {
-            button.classList.remove('drag-over-placeholder-before', 'drag-over-placeholder-after');
-        });
-
-        // Add placeholder class to the appropriate element
-        if (afterElement) {
-            // Add margin *before* the element we'd insert before
-            afterElement.classList.add('drag-over-placeholder-before');
-        } else {
-            // If afterElement is null, we are dropping at the end.
-            // Add margin *after* the last non-dragging element.
-            const lastElement = spaceSwitcher.querySelector('button:not(.dragging-switcher):last-of-type');
-            if (lastElement) {
-                lastElement.classList.add('drag-over-placeholder-after');
-            }
-        }
-
-        // --- Remove this block ---
-        // We no longer move the element during dragover, rely on CSS placeholders
-        /*
-        if (currentlyDragged) {
-            if (afterElement == null) {
-                spaceSwitcher.appendChild(currentlyDragged);
-            } else {
-                spaceSwitcher.insertBefore(currentlyDragged, afterElement);
-            }
-        }
-        */
-        // --- End of removed block ---
+    const clearIndicators = () => spaceSwitcher.querySelectorAll('button').forEach(button => {
+        button.classList.remove('drag-over-placeholder-before', 'drag-over-placeholder-after');
     });
-
-    spaceSwitcher.addEventListener('dragleave', (e) => {
-        // Simple cleanup: remove placeholders if the mouse leaves the container area
-        // More robust check might involve relatedTarget, but this is often sufficient
-        if (e.target === spaceSwitcher) {
-            const buttons = spaceSwitcher.querySelectorAll('button');
-            buttons.forEach(button => {
-                button.classList.remove('drag-over-placeholder-before', 'drag-over-placeholder-after');
-            });
+    // Replace container handlers on refresh; never accumulate stale closures.
+    spaceSwitcher.ondragover = event => {
+        event.preventDefault();
+        if (!draggedButton) return;
+        clearIndicators();
+        const after = getDragAfterElementSwitcher(spaceSwitcher, event.clientX);
+        if (after) after.classList.add('drag-over-placeholder-before');
+        else spaceSwitcher.querySelector('button:not(.dragging-switcher):last-of-type')?.classList.add('drag-over-placeholder-after');
+    };
+    spaceSwitcher.ondragleave = event => { if (!spaceSwitcher.contains(event.relatedTarget)) clearIndicators(); };
+    spaceSwitcher.ondrop = async event => {
+        event.preventDefault();
+        clearIndicators();
+        if (!draggedButton) return;
+        const id = draggedButton.dataset.spaceId;
+        const target = event.target.closest('button');
+        if (target === draggedButton) return;
+        const desired = renderedIds.filter(spaceId => spaceId !== id);
+        let index = desired.length;
+        if (target) {
+            const rect = target.getBoundingClientRect();
+            index = desired.indexOf(target.dataset.spaceId) + (event.clientX >= rect.left + rect.width / 2 ? 1 : 0);
         }
-    });
-
-    spaceSwitcher.addEventListener('drop', async (e) => {
-        e.preventDefault();
-
-        // Ensure placeholders are removed after drop
-        const buttons = spaceSwitcher.querySelectorAll('button');
-        buttons.forEach(button => {
-            button.classList.remove('drag-over-placeholder-before', 'drag-over-placeholder-after');
-        });
-
-        if (draggedButton) {
-            const targetElement = e.target.closest('button'); // Find the button dropped onto or near
-            const draggedSpaceId = draggedButton.dataset.spaceId;
-            let targetSpaceId = targetElement ? targetElement.dataset.spaceId : null;
-
-            // Find original index
-            const originalIndex = spaces.findIndex(s => s.id === draggedSpaceId);
-            if (originalIndex === -1) return; // Should not happen
-
-            const draggedSpace = spaces[originalIndex];
-
-            // Remove from original position
-            spaces.splice(originalIndex, 1);
-
-            // Find new index
-            let newIndex;
-            if (targetSpaceId) {
-                const targetIndex = spaces.findIndex(s => s.id === targetSpaceId);
-                // Determine if dropping before or after the target based on drop position relative to target center
-                const targetRect = targetElement.getBoundingClientRect();
-                const dropX = e.clientX; // *** Use clientX ***
-                if (dropX < targetRect.left + targetRect.width / 2) { // *** Use left and width ***
-                    newIndex = targetIndex; // Insert before target
-                } else {
-                    newIndex = targetIndex + 1; // Insert after target
-                }
-
-            } else {
-                // If dropped not on a specific button (e.g., empty area), append to end
-                newIndex = spaces.length;
-            }
-
-            // Insert at new position
-            // Ensure newIndex is within bounds (can happen if calculation is slightly off at edges)
-            // newIndex = Math.max(0, Math.min(newIndex, spaces.length));
-            Logger.log("droppedat", newIndex);
-
-            if (newIndex < 0) {
-                newIndex = 0;
-            } else if (newIndex > spaces.length) {
-                newIndex = spaces.length;
-            }
-            Logger.log("set", newIndex);
-
-            spaces.splice(newIndex, 0, draggedSpace);
-
-            // Save and re-render
-            saveSpaces();
-            await updateSpaceSwitcher(); // Re-render to reflect new order and clean up listeners
+        desired.splice(Math.max(0, index), 0, id);
+        pendingMutationCount++;
+        try {
+            await pendingSpaceSaves;
+            const saved = await spaceRequest('reorder', { before: renderedIds, after: desired });
+            await adoptStoredSpaces(saved, { render: false });
+        } catch (error) {
+            await adoptStoredSpaces(await spaceRequest('get'), { render: false });
+            alert(error.message);
+        } finally {
+            draggedButton = null;
+            isDraggingTab = false;
+            pendingMutationCount--;
+            await updateSpaceSwitcher();
+            refreshCoordinator.schedule();
         }
-        draggedButton = null; // Reset dragged item
-    });
-
-
-    spaces.forEach(space => {
+    };
+    for (const space of spaces) {
         const button = document.createElement('button');
         button.textContent = space.name;
-        button.dataset.spaceId = space.id; // Store space ID
+        button.dataset.spaceId = space.id;
         button.classList.toggle('active', space.id === activeSpaceId);
-        button.draggable = true; // Make the button draggable
-
+        button.draggable = true;
         button.addEventListener('click', async () => {
-            if (button.classList.contains('dragging-switcher')) return;
-
-            Logger.log("clicked for active", space);
-            await setActiveSpace(space.id);
+            if (!button.classList.contains('dragging-switcher')) await setActiveSpace(space.id);
         });
-
-        // --- Drag Event Listeners for Buttons ---
-        button.addEventListener('dragstart', (e) => {
-            draggedButton = button; // Store the button being dragged
-            // Use a specific class to avoid conflicts with tab dragging
-            setTimeout(() => button.classList.add('dragging-switcher'), 0);
-            e.dataTransfer.effectAllowed = 'move';
-            // Optional: Set drag data if needed elsewhere, though not strictly necessary for reordering within the same list
-            // e.dataTransfer.setData('text/plain', space.id);
+        button.addEventListener('dragstart', event => {
+            draggedButton = button;
+            isDraggingTab = true;
+            button.classList.add('dragging-switcher');
+            if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
         });
-
         button.addEventListener('dragend', () => {
-            // Clean up placeholders and dragging class on drag end (cancel/drop outside)
-            const buttons = spaceSwitcher.querySelectorAll('button');
-            buttons.forEach(btn => {
-                btn.classList.remove('drag-over-placeholder-before', 'drag-over-placeholder-after');
-            });
-            if (draggedButton) { // Check if draggedButton is still set
-                draggedButton.classList.remove('dragging-switcher');
-            }
-            draggedButton = null; // Ensure reset here too
+            clearIndicators();
+            button.classList.remove('dragging-switcher');
+            draggedButton = null;
+            isDraggingTab = false;
+            refreshCoordinator.schedule();
         });
-
         spaceSwitcher.appendChild(button);
-    });
-
-    // Inactive space from bookmarks
-    const arcifyFolder = await LocalStorage.getOrCreateArcifyFolder();
-    const spaceFolders = await chrome.bookmarks.getChildren(arcifyFolder.id);
-    spaceFolders.forEach(spaceFolder => {
-        if (spaces.find(space => space.name == spaceFolder.title)) {
-            return;
-        } else {
-            const button = document.createElement('button');
-            button.textContent = spaceFolder.title;
-            button.addEventListener('click', async () => {
-                const newTab = await ChromeHelper.createNewTab();
-                await createSpaceFromInactive(spaceFolder.title, newTab);
-            });
-            spaceSwitcher.appendChild(button);
-        }
-    });
-
-    // const spaceFolder = spaceFolders.find(f => f.title === space.name);
-
+    }
 }
 
 // Wrapper functions that use the unified getDragAfterElement from domManager.js
