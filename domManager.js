@@ -1,3 +1,4 @@
+import { favoriteRequest } from './favorite-client.js';
 import { firstUnusedColor } from './space-colors.js';
 /**
  * DOMManager - Sidebar DOM manipulation and UI component management
@@ -205,7 +206,7 @@ export function showTabContextMenu(x, y, tab, isPinned, isBookmarkOnly, tabEleme
         addToFavoritesOption.className = 'context-menu-item';
         addToFavoritesOption.textContent = 'Add to Favorites';
         addToFavoritesOption.addEventListener('click', async () => {
-            await chrome.tabs.update(tab.id, { pinned: true });
+            await favoriteRequest('add', { tabId: tab.id, windowId: tab.windowId });
             contextMenu.remove();
         });
         contextMenu.appendChild(addToFavoritesOption);
