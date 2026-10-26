@@ -25,6 +25,7 @@ function background(completed = false, onboardingVersion = undefined, version = 
         chrome, console, registerTourMessages() {},
         registerBookmarkListeners() {},
         enqueueBookmarkOrder: async () => [],
+        GlobalFavorites: class { install() {} },
         SpaceStore: class { install() {} async dispatch() { return [{ id: 'home' }]; } },
         Utils: { getSettings: async () => ({ autoArchiveEnabled: false }) },
         Logger: { log() {}, error() {} }
