@@ -1,4 +1,20 @@
 import { Utils } from './utils.js';
+import { LocalStorage } from './localstorage.js';
+
+// Deletion may outlive its bookmark folder. Prove absence by ID before ignoring
+// a failure; moved folders and ordinary API failures must still be reported.
+export async function removeSpaceBookmarkFolder(space) {
+    if (!space?.bookmarkFolderId) return;
+    try {
+        const folder = await getSpaceBookmarkFolder(space);
+        await chrome.bookmarks.removeTree(folder.id);
+    } catch (error) {
+        const contains = nodes => nodes.some(node => String(node.id) === String(space.bookmarkFolderId)
+            || (node.children && contains(node.children)));
+        if (contains(await chrome.bookmarks.getTree())) throw error;
+    }
+    await LocalStorage.removeSpaceRegistryEntry(space.bookmarkFolderId);
+}
 
 export async function getSpaceBookmarkFolder(space) {
     if (!space?.bookmarkFolderId) throw new Error('This space has no bookmark folder association.');

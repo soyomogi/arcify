@@ -1,4 +1,4 @@
-import { getSpaceBookmarkById, getSpaceBookmarkFolder, getSpaceBookmarkTree, removeSpacePin } from './space-bookmarks.js';
+import { getSpaceBookmarkById, getSpaceBookmarkFolder, getSpaceBookmarkTree, removeSpacePin, removeSpaceBookmarkFolder } from './space-bookmarks.js';
 import { initSidebarTour } from './sidebar-tour.js';
 /**
  * Sidebar - Main extension UI and tab/space management
@@ -3383,9 +3383,7 @@ async function deleteSpace(spaceId) {
     if (space) {
         editorSessions.dispose('folder-pending', spaceId);
         editorSessions.dispose('space', spaceId);
-        const folderToDelete = await getSpaceBookmarkFolder(space);
-        await chrome.bookmarks.removeTree(folderToDelete.id);
-        await LocalStorage.removeSpaceRegistryEntry(folderToDelete.id);
+        await removeSpaceBookmarkFolder(space);
         // Close live tabs owned by the deleted space.
         const ownedTabs = (await chrome.tabs.query({})).filter(t => ownerOf(spaces, t.id)?.id === spaceId);
 
