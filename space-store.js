@@ -1,6 +1,7 @@
 import { isPracticeUrl } from './tour-practice.js';
 import { syncSpaceGroups } from './tab-group-sync.js';
 import { LocalStorage } from './localstorage.js';
+import { orderSpacesByFolders, reorderSpaceFolders } from './space-order.js';
 
 const sections = ['spaceBookmarks', 'temporaryTabs'];
 export const tabIds = space => sections.flatMap(key => space?.[key] || []);
@@ -118,6 +119,7 @@ export class SpaceStore {
     async discoverBookmarkSpaces() {
         const before = JSON.stringify(this.spaces);
         const root = await LocalStorage.getOrCreateArcifyFolder();
+        this.bookmarkRootId = root.id;
         const folders = (await chrome.bookmarks.getChildren(root.id)).filter(node => !node.url);
         for (const folder of folders) {
             let space = this.spaces.find(space => space.bookmarkFolderId === folder.id);
@@ -129,6 +131,7 @@ export class SpaceStore {
             }
             space.name = folder.title;
         }
+        this.spaces = orderSpacesByFolders(this.spaces, folders);
         return before !== JSON.stringify(this.spaces);
     }
     track(tab) {
@@ -236,6 +239,13 @@ export class SpaceStore {
                     if (await this.discoverBookmarkSpaces()) await this.persist();
                     break;
                 case 'patch':
+                    if (!message.before.every((space, index) => space.id === message.after[index]?.id)) {
+                        const retained = message.before.map(space => space.id).filter(id => message.after.some(space => space.id === id));
+                        const reordered = message.after.map(space => space.id).filter(id => message.before.some(space => space.id === id));
+                        if (JSON.stringify(retained) !== JSON.stringify(reordered)) {
+                            throw new Error('Use the space reorder command to change folder order.');
+                        }
+                    }
                     for (const next of message.after) {
                         const prev = message.before.find(s => s.id === next.id);
                         for (const key of sections) if (JSON.stringify(next[key]) !== JSON.stringify(prev?.[key])) {
@@ -244,6 +254,17 @@ export class SpaceStore {
                     }
                     this.spaces = applySpacePatch(this.spaces, message.before, message.after);
                     if (!this.spaces.length) this.spaces.push(await this.makeSpace(this.defaultSpaceName));
+                    await this.discoverBookmarkSpaces();
+                    break;
+                case 'reorder':
+                    if (await this.discoverBookmarkSpaces()) await this.persist();
+                    try { await reorderSpaceFolders(this.spaces, message.before, message.after); }
+                    catch (error) {
+                        await this.discoverBookmarkSpaces();
+                        await this.persist();
+                        throw error;
+                    }
+                    await this.discoverBookmarkSpaces();
                     break;
                 case 'activate': this.active[message.windowId] = message.spaceId; break;
                 case 'switch': await this.switchSpace(message); break;
@@ -326,6 +347,21 @@ export class SpaceStore {
         chrome.tabs.onUpdated.addListener((id, change) => { if (change.groupId !== undefined) scheduleSync(); });
         chrome.tabGroups.onRemoved.addListener(scheduleSync);
         chrome.tabGroups.onUpdated.addListener(scheduleSync);
+        let bookmarkTimer;
+        const refreshBookmarkOrder = (id, info) => {
+            if (String(id) !== String(this.bookmarkRootId)
+                && ![info?.parentId, info?.oldParentId].some(parent => String(parent) === String(this.bookmarkRootId))
+                && !this.spaces?.some(space => String(space.bookmarkFolderId) === String(id))) return;
+            clearTimeout(bookmarkTimer);
+            bookmarkTimer = setTimeout(() => this.run(async () => {
+                if (await this.discoverBookmarkSpaces()) await this.persist();
+            }).catch(console.error), 100);
+        };
+        chrome.bookmarks.onCreated?.addListener(refreshBookmarkOrder);
+        chrome.bookmarks.onRemoved?.addListener(refreshBookmarkOrder);
+        chrome.bookmarks.onMoved?.addListener(refreshBookmarkOrder);
+        chrome.bookmarks.onChanged?.addListener(refreshBookmarkOrder);
+        chrome.bookmarks.onChildrenReordered?.addListener(refreshBookmarkOrder);
         this.run(() => {}).catch(console.error);
     }
 }
