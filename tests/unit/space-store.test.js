@@ -217,3 +217,67 @@ test('sidebar reads discover later bookmark folders and follow folder renames by
     assert.equal(store.spaces[2].bookmarkFolderId, 'later');
     assert.deepEqual(mutations, []);
 });
+
+function folderOrderFixture() {
+    const folders = [{ id: 'a', title: 'a' }, { id: 'loose', title: 'Loose', url: 'https://loose.test/' }, { id: 'b', title: 'b' }];
+    chrome.bookmarks.getChildren = async id => id === 'root' ? structuredClone(folders) : [];
+    chrome.bookmarks.move = async (id, { parentId, index }) => {
+        mutations.push(['bookmarkMove', id, parentId, index]);
+        const current = folders.findIndex(node => node.id === id);
+        const [node] = folders.splice(current, 1);
+        folders.splice(index, 0, node);
+    };
+    return folders;
+}
+
+test('space reads adopt current Chrome folder order without changing membership', async () => {
+    const folders = folderOrderFixture();
+    const store = new SpaceStore();
+    await store.dispatch({ action: 'get' });
+    folders.reverse();
+    const ordered = await store.dispatch({ action: 'get' });
+    assert.deepEqual(ordered.map(space => space.id), ['b', 'a']);
+    assert.equal(ownerOf(ordered, 1).id, 'a');
+    assert.equal(ownerOf(ordered, 2).id, 'b');
+    assert.deepEqual(mutations, []);
+});
+
+test('space reorder writes folders while preserving loose bookmark slots and rejects stale panels', async () => {
+    const folders = folderOrderFixture();
+    const store = new SpaceStore();
+    const ordered = await store.dispatch({ action: 'reorder', before: ['a', 'b'], after: ['b', 'a'] });
+    assert.deepEqual(ordered.map(space => space.id), ['b', 'a']);
+    assert.deepEqual(folders.map(node => node.id), ['b', 'loose', 'a']);
+    mutations.length = 0;
+    await assert.rejects(store.dispatch({ action: 'reorder', before: ['a', 'b'], after: ['b', 'a'] }), /changed/);
+    assert.deepEqual(mutations, []);
+    assert.deepEqual(local.spaces.map(space => space.id), ['b', 'a']);
+});
+
+test('native reorder wins over a stale metadata patch without discarding its unrelated edit', async () => {
+    const folders = folderOrderFixture();
+    const store = new SpaceStore();
+    const before = await store.dispatch({ action: 'get' });
+    const after = structuredClone(before); after[0].color = 'green';
+    folders.reverse();
+    const saved = await store.dispatch({ action: 'patch', before, after });
+    assert.deepEqual(saved.map(space => space.id), ['b', 'a']);
+    assert.equal(saved.find(space => space.id === 'a').color, 'green');
+    assert.deepEqual(mutations, []);
+});
+
+test('patches cannot bypass folder-order concurrency checks', async () => {
+    folderOrderFixture();
+    const store = new SpaceStore();
+    const before = await store.dispatch({ action: 'get' });
+    await assert.rejects(store.dispatch({ action: 'patch', before, after: [...before].reverse() }), /reorder command/);
+    assert.deepEqual(mutations, []);
+});
+
+test('a missing associated folder remains deletable and cannot silently reorder another folder', async () => {
+    const folders = folderOrderFixture();
+    folders.splice(2, 1);
+    const store = new SpaceStore();
+    await assert.rejects(store.dispatch({ action: 'reorder', before: ['a', 'b'], after: ['b', 'a'] }), /missing/);
+    assert.deepEqual(mutations, []);
+});
