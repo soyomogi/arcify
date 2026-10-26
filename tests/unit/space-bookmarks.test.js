@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getSpaceBookmarkById, removeSpacePin, getSpaceBookmarkFolder, getSpaceBookmarkTree } from '../../space-bookmarks.js';
+import { getSpaceBookmarkById, removeSpacePin, getSpaceBookmarkFolder, getSpaceBookmarkTree, removeSpaceBookmarkFolder } from '../../space-bookmarks.js';
 import { BookmarkUtils } from '../../bookmark-utils.js';
 function mock() {
     const removed = [];
@@ -80,4 +80,45 @@ test('bookmark tree loading is all-or-nothing and performs no recovery writes', 
     await assert.rejects(getSpaceBookmarkTree({ bookmarkFolderId: 'space' }), /injected read failure/);
     assert.deepEqual(writes, []);
     assert.equal(tree.folder.length, 2);
+});
+
+test('space deletion tolerates a missing folder and clears only its registry entry', async () => {
+    mock();
+    const registry = { missing: { spaceUuid: 'deleted' }, other: { spaceUuid: 'keep' } };
+    chrome.storage.local.get = async () => ({ spaceRegistry: structuredClone(registry) });
+    chrome.storage.local.set = async ({ spaceRegistry }) => {
+        assert.deepEqual(spaceRegistry, { other: { spaceUuid: 'keep' } });
+    };
+    chrome.bookmarks.get = async () => { throw new Error("Can't find bookmark for id."); };
+    chrome.bookmarks.getTree = async () => [{ id: '0', children: [{ id: 'other', title: 'Same name' }] }];
+    chrome.bookmarks.removeTree = async () => assert.fail('Must not delete another folder');
+    await removeSpaceBookmarkFolder({ bookmarkFolderId: 'missing', name: 'Same name' });
+    await removeSpaceBookmarkFolder({ name: 'No association' });
+});
+
+test('space deletion tolerates a folder removed between lookup and removal', async () => {
+    mock();
+    let cleaned = false;
+    chrome.storage.local.get = async () => ({ spaceRegistry: { space: {} } });
+    chrome.storage.local.set = async () => { cleaned = true; };
+    chrome.bookmarks.removeTree = async () => { throw new Error("Can't find bookmark for id."); };
+    chrome.bookmarks.getTree = async () => [{ id: '0', children: [] }];
+    await removeSpaceBookmarkFolder({ bookmarkFolderId: 'space' });
+    assert.equal(cleaned, true);
+});
+
+test('space deletion reports removal failures when the associated folder still exists', async () => {
+    mock();
+    chrome.bookmarks.removeTree = async () => { throw new Error('Permission denied'); };
+    chrome.bookmarks.getTree = async () => [{ id: 'space', title: 'Keep' }];
+    chrome.storage.local.set = async () => assert.fail('Must retain registry after failure');
+    await assert.rejects(removeSpaceBookmarkFolder({ bookmarkFolderId: 'space' }), /Permission denied/);
+});
+
+test('space deletion does not remove a moved association or a same-named replacement', async () => {
+    mock();
+    chrome.bookmarks.get = async () => [{ id: 'space', parentId: 'outside' }];
+    chrome.bookmarks.getTree = async () => [{ id: 'outside', children: [{ id: 'space' }] }];
+    chrome.bookmarks.removeTree = async () => assert.fail('Must not delete outside Arcify');
+    await assert.rejects(removeSpaceBookmarkFolder({ bookmarkFolderId: 'space' }), /no longer inside/);
 });
