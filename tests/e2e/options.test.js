@@ -118,7 +118,7 @@ describe('Options Page', () => {
         expect(elements.autoArchiveEnabled).toBe(true);
         expect(elements.autoArchiveIdleMinutes).toBe(true);
         expect(elements.autoArchiveIdleMinutesContainer).toBe(true);
-        expect(elements.invertTabOrder).toBe(true);
+        expect(elements.invertTabOrder).toBe(false);
         expect(elements.showAllOpenTabsInCollapsedFolders).toBe(true);
         expect(elements.advancedOptionsToggle).toBe(true);
         expect(elements.advancedOptionsContent).toBe(true);
@@ -146,16 +146,14 @@ describe('Options Page', () => {
         const defaults = await optionsPage.evaluate(() => {
           return {
             autoArchiveEnabled: document.getElementById('autoArchiveEnabled')?.checked,
-            invertTabOrder: document.getElementById('invertTabOrder')?.checked,
             showAllOpenTabsInCollapsedFolders: document.getElementById('showAllOpenTabsInCollapsedFolders')?.checked,
             debugLoggingEnabled: document.getElementById('debugLoggingEnabled')?.checked,
           };
         });
 
-        // defaults: autoArchiveEnabled=false, invertTabOrder=true,
+        // defaults: autoArchiveEnabled=false,
         // showAllOpenTabsInCollapsedFolders=false, debugLoggingEnabled=false
         expect(defaults.autoArchiveEnabled).toBe(false);
-        expect(defaults.invertTabOrder).toBe(true);
         expect(defaults.showAllOpenTabsInCollapsedFolders).toBe(false);
         expect(defaults.debugLoggingEnabled).toBe(false);
 
@@ -191,29 +189,6 @@ describe('Options Page', () => {
         logTestStep(`autoArchiveEnabled toggled from ${initialState} to ${newState}`);
       } catch (error) {
         await takeScreenshotOnFailure(optionsPage, 'toggle-autoarchive-failure');
-        throw error;
-      }
-    });
-
-    test('should toggle invertTabOrder checkbox', async () => {
-      try {
-        logTestStep('Toggling invertTabOrder...');
-
-        const initialState = await optionsPage.evaluate(() => {
-          return document.getElementById('invertTabOrder').checked;
-        });
-
-        await optionsPage.evaluate(() => document.getElementById('invertTabOrder').click());
-        await delay(800);
-
-        const newState = await optionsPage.evaluate(() => {
-          return document.getElementById('invertTabOrder').checked;
-        });
-
-        expect(newState).toBe(!initialState);
-        logTestStep(`invertTabOrder toggled from ${initialState} to ${newState}`);
-      } catch (error) {
-        await takeScreenshotOnFailure(optionsPage, 'toggle-inverttaborder-failure');
         throw error;
       }
     });
@@ -597,17 +572,17 @@ describe('Options Page', () => {
       try {
         logTestStep('Testing settings persistence across page reopen...');
 
-        // Read the current state of invertTabOrder
+        // Read the current state of showAllOpenTabsInCollapsedFolders
         const initialState = await optionsPage.evaluate(() => {
-          return document.getElementById('invertTabOrder').checked;
+          return document.getElementById('showAllOpenTabsInCollapsedFolders').checked;
         });
 
         // Toggle it
-        await optionsPage.evaluate(() => document.getElementById('invertTabOrder').click());
+        await optionsPage.evaluate(() => document.getElementById('showAllOpenTabsInCollapsedFolders').click());
         await delay(1000);
 
         const toggledState = await optionsPage.evaluate(() => {
-          return document.getElementById('invertTabOrder').checked;
+          return document.getElementById('showAllOpenTabsInCollapsedFolders').checked;
         });
         expect(toggledState).toBe(!initialState);
 
@@ -617,15 +592,15 @@ describe('Options Page', () => {
         await delay(1500);
 
         const persistedState = await optionsPage.evaluate(() => {
-          return document.getElementById('invertTabOrder').checked;
+          return document.getElementById('showAllOpenTabsInCollapsedFolders').checked;
         });
 
         expect(persistedState).toBe(toggledState);
-        logTestStep(`Setting persisted: invertTabOrder = ${persistedState}`);
+        logTestStep(`Setting persisted: showAllOpenTabsInCollapsedFolders = ${persistedState}`);
 
         // Reset to original state to avoid test pollution
         if (persistedState !== initialState) {
-          await optionsPage.evaluate(() => document.getElementById('invertTabOrder').click());
+          await optionsPage.evaluate(() => document.getElementById('showAllOpenTabsInCollapsedFolders').click());
           await delay(1000);
         }
       } catch (error) {

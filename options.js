@@ -100,7 +100,6 @@ async function saveOptions() {
     autoArchiveEnabled: getCheckboxValue(document.getElementById('autoArchiveEnabled'), false),
     autoArchiveIdleMinutes: parseInt(autoArchiveIdleMinutesInput?.value, 10) || 360,
     syncTabGroups: getCheckboxValue(document.getElementById('syncTabGroups'), false),
-    invertTabOrder: getCheckboxValue(document.getElementById('invertTabOrder'), true),
     showAllOpenTabsInCollapsedFolders: getCheckboxValue(document.getElementById('showAllOpenTabsInCollapsedFolders'), false),
     colorOverrides: Object.keys(colorOverrides).length > 0 ? colorOverrides : null,
     debugLoggingEnabled: getCheckboxValue(document.getElementById('debugLoggingEnabled'), false)
@@ -144,7 +143,6 @@ async function restoreOptions() {
   // Restore checkbox values
   setCheckboxValue(document.getElementById('autoArchiveEnabled'), settings.autoArchiveEnabled, false);
   setCheckboxValue(document.getElementById('syncTabGroups'), settings.syncTabGroups, false);
-  setCheckboxValue(document.getElementById('invertTabOrder'), settings.invertTabOrder, true);
   setCheckboxValue(document.getElementById('showAllOpenTabsInCollapsedFolders'), settings.showAllOpenTabsInCollapsedFolders, false);
   setCheckboxValue(document.getElementById('debugLoggingEnabled'), settings.debugLoggingEnabled, false);
 
@@ -247,7 +245,7 @@ function setupAutoSave() {
   addListenerIfExists('defaultSpaceName', 'change', saveOptions);
 
   // Auto-save for checkboxes (most just save immediately)
-  const checkboxIds = ['syncTabGroups', 'invertTabOrder', 'showAllOpenTabsInCollapsedFolders', 'debugLoggingEnabled'];
+  const checkboxIds = ['syncTabGroups', 'showAllOpenTabsInCollapsedFolders', 'debugLoggingEnabled'];
   checkboxIds.forEach(id => addListenerIfExists(id, 'change', saveOptions));
 
   // Auto-archive checkbox needs special handling to update visibility

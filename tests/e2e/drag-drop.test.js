@@ -1055,6 +1055,7 @@ describe('Drag and Drop', () => {
         await sidebarPage.reload({ waitUntil: 'domcontentloaded' });
         await delay(1000);
 
+        await sidebarPage.waitForFunction(() => document.querySelectorAll('.tab').length >= 5);
         const tabElements = await sidebarPage.$$('.tab');
         logTestStep(`Total tabs present: ${tabElements.length}`);
         expect(tabElements.length).toBeGreaterThanOrEqual(5);
